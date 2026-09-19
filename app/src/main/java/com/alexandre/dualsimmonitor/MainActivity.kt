@@ -12,12 +12,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
+    private lateinit var repository: TelephonyRepository
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    ) { recreate() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        repository = TelephonyRepository(this)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -27,7 +29,7 @@ class MainActivity : ComponentActivity() {
                     surface = Color(0xFF1A2020)
                 )
             ) {
-                DualSimScreen()
+                DualSimScreen(repository)
             }
         }
         requestPermissionsIfNeeded()
