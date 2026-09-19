@@ -13,13 +13,22 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var repository: TelephonyRepository
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { recreate() }
+    ) {
+        setContentView(android.R.id.content)
+        render()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repository = TelephonyRepository(this)
+        render()
+        requestPermissionsIfNeeded()
+    }
+
+    private fun render() {
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -32,7 +41,6 @@ class MainActivity : ComponentActivity() {
                 DualSimScreen(repository)
             }
         }
-        requestPermissionsIfNeeded()
     }
 
     private fun requestPermissionsIfNeeded() {
