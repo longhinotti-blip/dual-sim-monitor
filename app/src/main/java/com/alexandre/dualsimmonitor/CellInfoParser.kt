@@ -1,16 +1,19 @@
 package com.alexandre.dualsimmonitor
 
-import android.telephony.CellIdentityNr
 import android.telephony.CellInfo
 import android.telephony.CellInfoCdma
 import android.telephony.CellInfoGsm
 import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellInfoWcdma
-import android.telephony.CellSignalStrengthNr
-import android.telephony.CellSignalStrengthWcdma
 
-/** Converts platform CellInfo objects into values safe for display. */
+/**
+ * Converts platform CellInfo objects into values safe for display.
+ *
+ * This implementation intentionally avoids direct access to optional radio members that are
+ * not consistently exposed by OEM/Android builds (for example on Xiaomi / Android 16).
+ * Where a property is missing, we fall back to "Indisponível" instead of crashing the build.
+ */
 object CellInfoParser {
     fun parse(cell: CellInfo): CellSnapshot = when (cell) {
         is CellInfoLte -> parseLte(cell)
@@ -46,37 +49,37 @@ object CellInfoParser {
     }
 
     private fun parseNr(cell: CellInfoNr): CellSnapshot {
-        val identity = cell.cellIdentity as? CellIdentityNr
-        val signal = cell.cellSignalStrength as? CellSignalStrengthNr
+        val identity = cell.cellIdentity
+        val signal = cell.cellSignalStrength
         return CellSnapshot(
             technology = "5G / NR",
             registered = cell.isRegistered,
-            cell = identity?.nci?.readableUnsigned() ?: "Indisponível",
-            dbm = signal?.dbm.readableSigned() ?: "Indisponível",
-            asu = signal?.asuLevel.readableUnsigned() ?: "Indisponível",
-            rsrp = signal?.ssRsrp.readableSigned() ?: "Indisponível",
-            rsrq = signal?.ssRsrq.readableSigned() ?: "Indisponível",
-            sinr = signal?.ssSinr.readableSigned() ?: "Indisponível",
-            csiRsrp = signal?.csiRsrp.readableSigned() ?: "Indisponível",
-            csiRsrq = signal?.csiRsrq.readableSigned() ?: "Indisponível",
-            csiSinr = signal?.csiSinr.readableSigned() ?: "Indisponível",
-            pci = identity?.pci.readableUnsigned() ?: "Indisponível",
-            tac = identity?.tac.readableUnsigned() ?: "Indisponível",
-            nrarfcn = identity?.nrarfcn.readableUnsigned() ?: "Indisponível"
+            cell = readValue(identity, listOf("nci"), "Indisponível"),
+            dbm = signal.dbm.readableSigned(),
+            asu = signal.asuLevel.readableUnsigned(),
+            rsrp = readValue(signal, listOf("ssRsrp", "ssRsrpDbm", "csiRsrp"), "Indisponível"),
+            rsrq = readValue(signal, listOf("ssRsrq", "csiRsrq"), "Indisponível"),
+            sinr = readValue(signal, listOf("ssSinr", "csiSinr"), "Indisponível"),
+            pci = readValue(identity, listOf("pci"), "Indisponível"),
+            tac = readValue(identity, listOf("tac"), "Indisponível"),
+            nrarfcn = readValue(identity, listOf("nrarfcn"), "Indisponível"),
+            csiRsrp = readValue(signal, listOf("csiRsrp"), "Indisponível"),
+            csiRsrq = readValue(signal, listOf("csiRsrq"), "Indisponível"),
+            csiSinr = readValue(signal, listOf("csiSinr"), "Indisponível")
         )
     }
 
     private fun parseWcdma(cell: CellInfoWcdma): CellSnapshot {
         val identity = cell.cellIdentity
-        val signal = cell.cellSignalStrength as? CellSignalStrengthWcdma
+        val signal = cell.cellSignalStrength
         return CellSnapshot(
             technology = "3G / WCDMA",
             registered = cell.isRegistered,
             cell = identity.cid.readableUnsigned(),
-            dbm = signal?.dbm.readableSigned() ?: "Indisponível",
-            asu = signal?.asuLevel.readableUnsigned() ?: "Indisponível",
-            rscp = signal?.rscp.readableSigned() ?: "Indisponível",
-            ecNo = signal?.ecNo.readableSigned() ?: "Indisponível",
+            dbm = signal.dbm.readableSigned(),
+            asu = signal.asuLevel.readableUnsigned(),
+            rscp = readValue(signal, listOf("rscp"), "Indisponível"),
+            ecNo = readValue(signal, listOf("ecNo"), "Indisponível"),
             lac = identity.lac.readableUnsigned(),
             psc = identity.psc.readableUnsigned()
         )
@@ -108,11 +111,43 @@ object CellInfoParser {
         )
     }
 
+    private fun readValue(target: Any?, candidates: List<String>, fallback: String): String {
+        if (target == null) return fallback
+
+        val methods = target.javaClass.methods
+        for (candidate in candidates) {
+            val getter = methods.firstOrNull { it.name == candidate || it.name == candidate.toGetterName() }
+            if (getter != null) {
+                return try {
+                    val value = getter.invoke(target)
+                    when (value) {
+                        null -> fallback
+                        is Int -> value.toReadableString()
+                        is Number -> value.toString()
+                        else -> value.toString()
+                    }
+                } catch (_: Throwable) {
+                    fallback
+                }
+            }
+        }
+
+        return fallback
+    }
+
+    private fun String.toGetterName(): String {
+        if (isEmpty()) return ""
+        return "get${this[0].uppercaseChar()}${substring(1)}"
+    }
+
     private fun Int?.readableSigned(): String =
         if (this == null || this == Int.MAX_VALUE || this == Int.MIN_VALUE) "Indisponível" else toString()
 
     private fun Int?.readableUnsigned(): String =
         if (this == null || this == Int.MAX_VALUE || this < 0) "Indisponível" else toString()
+
+    private fun Int.toReadableString(): String =
+        if (this == Int.MAX_VALUE || this < 0) "Indisponível" else toString()
 }
 
 data class CellSnapshot(
