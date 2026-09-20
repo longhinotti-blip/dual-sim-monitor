@@ -28,26 +28,104 @@ private enum class Tab(val label: String) { HOME("INÍCIO"), MONITOR("MONITORAME
 @Composable
 fun DualSimApp(repository: TelephonyRepository) {
     var tab by remember { mutableStateOf(Tab.HOME) }
-    var state by remember { mutableStateOf(MonitorState()) }
+    var lastMeasurement by remember { mutableStateOf<MonitorState?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var monitoring by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(repository.loadHistory()) }
     var confirmClear by remember { mutableStateOf(false) }
-    fun manualRefresh() { refreshing = true; repository.refresh { state = it; refreshing = false } }
-    fun monitoredSample() { repository.monitorAndSave { state = it; history = repository.loadHistory() } }
-    LaunchedEffect(Unit) { manualRefresh() }
-    LaunchedEffect(monitoring) { if (monitoring) { monitoredSample(); while (monitoring) { delay(10_000); if (monitoring) monitoredSample() } } }
-    Scaffold(bottomBar = { NavigationBar(Modifier.navigationBarsPadding()) { Tab.values().forEach { item -> NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { Text(item.label.take(1)) }, label = { Text(item.label) }) } } }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            when (tab) { Tab.HOME -> HomeScreen(state, refreshing, ::manualRefresh); Tab.MONITOR -> MonitorScreen(state, monitoring, { monitoring = true }, { monitoring = false }); Tab.HISTORY -> HistoryScreen(history, { confirmClear = true }); Tab.DIAGNOSTIC -> DiagnosticScreen(state, repository) }
+
+    fun acceptMeasurement(value: MonitorState) {
+        // Never replace a valid last measurement with an empty/incomplete callback.
+        if (value.sims.isNotEmpty()) lastMeasurement = value
+    }
+    fun manualRefresh() {
+        refreshing = true
+        repository.refresh { value -> acceptMeasurement(value); refreshing = false }
+    }
+    fun monitoredSample() {
+        repository.monitorAndSave { value ->
+            acceptMeasurement(value)
+            history = repository.loadHistory()
         }
     }
-    if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false }, title = { Text("Limpar histórico?") }, text = { Text("Todas as medições locais serão apagadas.") }, confirmButton = { TextButton(onClick = { repository.clearHistory(); history = emptyList(); confirmClear = false }) { Text("LIMPAR") } }, dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("CANCELAR") } })
+
+    LaunchedEffect(Unit) {
+        // History is loaded before the first render. It also keeps the last record visible
+        // after an app restart; the full radio snapshot is replaced when a fresh sample arrives.
+        history = repository.loadHistory()
+        manualRefresh()
+    }
+    LaunchedEffect(monitoring) {
+        if (monitoring) {
+            monitoredSample()
+            while (monitoring) {
+                delay(10_000)
+                if (monitoring) monitoredSample()
+            }
+        }
+    }
+
+    Scaffold(bottomBar = { NavigationBar(Modifier.navigationBarsPadding()) {
+        Tab.values().forEach { item ->
+            NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { Text(item.label.take(1)) }, label = { Text(item.label) })
+        }
+    } }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+            when (tab) {
+                Tab.HOME -> HomeScreen(lastMeasurement, history.firstOrNull(), refreshing, ::manualRefresh)
+                Tab.MONITOR -> MonitorScreen(lastMeasurement, history.firstOrNull(), monitoring, { monitoring = true }, { monitoring = false })
+                Tab.HISTORY -> HistoryScreen(history, { confirmClear = true })
+                Tab.DIAGNOSTIC -> DiagnosticScreen(lastMeasurement ?: MonitorState(), repository)
+            }
+        }
+    }
+    if (confirmClear) AlertDialog(
+        onDismissRequest = { confirmClear = false },
+        title = { Text("Limpar histórico?") },
+        text = { Text("Todas as medições locais serão apagadas.") },
+        confirmButton = { TextButton(onClick = { repository.clearHistory(); history = emptyList(); lastMeasurement = null; confirmClear = false }) { Text("LIMPAR") } },
+        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("CANCELAR") } }
+    )
 }
 
-@Composable private fun HomeScreen(state: MonitorState, refreshing: Boolean, refresh: () -> Unit) { LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) { item { Text("Dual SIM Monitor v0.2") }; item { Card(colors = CardDefaults.cardColors()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text("CONEXÃO ATUAL"); Text("${state.connectivity.transport} • ${state.connectivity.validated}"); Text("SIM DE DADOS ATUAL"); Text(state.dataSim?.let { "${it.carrier} — SIM ${it.slot + 1} • subscriptionId ${it.subscriptionId}" } ?: "Indisponível") } } }; items(state.sims.take(2)) { sim -> Card { Column(Modifier.padding(16.dp)) { Text("SIM ${sim.slot + 1} — ${sim.carrier}"); Text(sim.cell?.let { "${it.technology} • ${it.dbm}" } ?: "Indisponível"); Text(sim.cell?.let { "RSRP ${it.rsrp} • RSRQ ${it.rsrq} • SINR ${it.sinr}" } ?: "Qualidade indisponível") } } }; item { Button(onClick = refresh, enabled = !refreshing, modifier = Modifier.fillMaxWidth()) { Text(if (refreshing) "Atualizando…" else "Atualizar") } } } }
+@Composable private fun HomeScreen(state: MonitorState?, latest: Measurement?, refreshing: Boolean, refresh: () -> Unit) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text("Dual SIM Monitor v0.2") }
+        item { Card(colors = CardDefaults.cardColors()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("CONEXÃO ATUAL")
+            Text("${state?.connectivity?.transport ?: "Indisponível"} • ${state?.connectivity?.validated ?: "Indisponível"}")
+            Text("SIM DE DADOS ATUAL")
+            Text(state?.dataSim?.let { "${it.carrier} — SIM ${it.slot + 1} • subscriptionId ${it.subscriptionId}" } ?: latest?.let { "${it.carrier} — SIM ${it.slot} • subscriptionId ${it.dataSubscriptionId}" } ?: "Sem medições ainda.")
+        } } }
+        if (state != null && state.sims.isNotEmpty()) items(state.sims.take(2)) { sim -> SimCard(sim) }
+        else if (latest == null) item { Text("Sem medições ainda.") }
+        item { Button(onClick = refresh, enabled = !refreshing, modifier = Modifier.fillMaxWidth()) { Text(if (refreshing) "Atualizando…" else "Atualizar") } }
+    }
+}
 
-@Composable private fun MonitorScreen(state: MonitorState, monitoring: Boolean, start: () -> Unit, stop: () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("MONITORAMENTO"); Text(if (monitoring) "● Monitorando" else "● Parado"); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = start, enabled = !monitoring, modifier = Modifier.weight(1f)) { Text("INICIAR") }; Button(onClick = stop, enabled = monitoring, modifier = Modifier.weight(1f)) { Text("PARAR") } }; Text("Atualização: 10 segundos"); Text("Internet: ${state.connectivity.transport}"); Text("SIM de dados: ${state.dataSim?.carrier ?: "Indisponível"}"); Text("Latência: ${state.connectivity.latencyMs?.let { "$it ms" } ?: "Indisponível"} • Perda: ${state.connectivity.packetLossPercent?.let { "$it%" } ?: "Indisponível"}"); state.sims.forEach { sim -> val isData = sim.subscriptionId == state.dataSim?.subscriptionId; Card { Column(Modifier.padding(12.dp)) { Text("SIM ${sim.slot + 1} • ${sim.carrier}"); Text("${sim.cell?.technology ?: "Indisponível"} | ${sim.cell?.dbm ?: "Indisponível"} | RSRP ${sim.cell?.rsrp ?: "Indisponível"} | RSRQ ${sim.cell?.rsrq ?: "Indisponível"} | SINR ${sim.cell?.sinr ?: "Indisponível"}"); Text(if (isData) "Internet: SIM DE DADOS • Latência ${state.connectivity.latencyMs?.let { "$it ms" } ?: "—"} • Perda ${state.connectivity.packetLossPercent?.let { "$it%" } ?: "—"}" else "Internet: não medida — SIM secundário") } } } } }
+@Composable private fun SimCard(sim: SimInfo) { Card { Column(Modifier.padding(16.dp)) { Text("SIM ${sim.slot + 1} — ${sim.carrier}"); Text(sim.cell?.let { "${it.technology} • ${it.dbm}" } ?: "Sem medição ainda"); Text(sim.cell?.let { "RSRP ${it.rsrp} • RSRQ ${it.rsrq} • SINR ${it.sinr}" } ?: "") } } }
+
+@Composable private fun MonitorScreen(state: MonitorState?, latest: Measurement?, monitoring: Boolean, start: () -> Unit, stop: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("MONITORAMENTO")
+        Text(if (monitoring) "● Monitorando" else "● Parado")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = start, enabled = !monitoring, modifier = Modifier.weight(1f)) { Text("INICIAR") }; Button(onClick = stop, enabled = monitoring, modifier = Modifier.weight(1f)) { Text("PARAR") } }
+        Text("Atualização: 10 segundos")
+        if (state == null || state.sims.isEmpty()) {
+            Text(if (latest == null) "Sem medições ainda." else "Última medição salva: ${latest.carrier} • SIM ${latest.slot}")
+            latest?.let { Text("Latência: ${it.latencyMillis?.let { ms -> "$ms ms" } ?: "—"} • Perda: ${it.packetLossPercent?.let { loss -> "$loss%" } ?: "—"}") }
+        } else {
+            Text("Internet: ${state.connectivity.transport}")
+            Text("SIM de dados: ${state.dataSim?.carrier ?: "Indisponível"}")
+            Text("Última medição: ${state.timestamp}")
+            Text("Latência: ${state.connectivity.latencyMs?.let { "$it ms" } ?: "—"} • Perda: ${state.connectivity.packetLossPercent?.let { "$it%" } ?: "—"}")
+            state.sims.forEach { sim ->
+                val isData = sim.subscriptionId == state.dataSim?.subscriptionId
+                Card { Column(Modifier.padding(12.dp)) { Text("SIM ${sim.slot + 1} • ${sim.carrier}"); Text("${sim.cell?.technology ?: "Sem medição ainda"} | ${sim.cell?.dbm ?: "—"} | RSRP ${sim.cell?.rsrp ?: "—"} | RSRQ ${sim.cell?.rsrq ?: "—"} | SINR ${sim.cell?.sinr ?: "—"}"); Text(if (isData) "Internet: SIM DE DADOS • Latência ${state.connectivity.latencyMs?.let { "$it ms" } ?: "—"} • Perda ${state.connectivity.packetLossPercent?.let { "$it%" } ?: "—"}" else "Internet: não medida — SIM secundário") } }
+            }
+        }
+    }
+}
 
 @Composable private fun HistoryScreen(history: List<Measurement>, clear: () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { Text("HISTÓRICO"); Text("${history.size} medições locais"); Button(onClick = clear, enabled = history.isNotEmpty()) { Text("LIMPAR HISTÓRICO") }; LazyColumn { items(history.take(100)) { m -> Card(Modifier.padding(vertical = 3.dp)) { Column(Modifier.padding(10.dp)) { Text("${m.carrier} • SIM ${m.slot} • ${if (m.isDefaultDataSim) "SIM de dados" else "SIM secundário"}"); Text("${m.technology} • dBm ${m.dbm} • RSRP ${m.rsrp} • RSRQ ${m.rsrq} • SINR ${m.sinr}"); Text(if (m.isDefaultDataSim) "Latência ${m.latencyMillis?.let { "$it ms" } ?: "—"} • Perda ${m.packetLossPercent?.let { "$it%" } ?: "—"}" else "Internet não medida — SIM secundário") } } } } } }
 
