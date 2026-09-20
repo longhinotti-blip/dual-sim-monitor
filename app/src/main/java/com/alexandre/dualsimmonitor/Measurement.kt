@@ -1,6 +1,6 @@
 package com.alexandre.dualsimmonitor
 
-/** Future local measurement record. No database or network storage is used in v0.1. */
+/** One local radio/network observation. Internet metrics are nullable for secondary SIMs. */
 data class Measurement(
     val timestampMillis: Long,
     val subscriptionId: Int,
@@ -14,5 +14,6 @@ data class Measurement(
     val cell: String,
     val latencyMillis: Long? = null,
     val packetLossPercent: Float? = null,
-    val dataSubscriptionId: Int
+    val dataSubscriptionId: Int,
+    val isDefaultDataSim: Boolean = subscriptionId == dataSubscriptionId
 )
