@@ -5,7 +5,7 @@ import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.util.Log
 
-/** Temporary runtime instrumentation; it does not modify parsed or persisted values. */
+/** Temporary runtime diagnostics only. This does not modify parsed or persisted values. */
 object CellInfoDebug {
     private const val TAG = "DualSimMonitor/CellInfo"
 
@@ -30,18 +30,41 @@ object CellInfoDebug {
     private fun logLte(subscriptionId: Int, cell: CellInfoLte) {
         val signal = cell.cellSignalStrength
         val identity = cell.cellIdentity
-        val rssnr = signal.rssnr
-        val rssnrState = when (rssnr) {
-            CellInfo.UNAVAILABLE -> "UNAVAILABLE"
-            Int.MIN_VALUE -> "INT_MIN_VALUE"
+        val rssnr: Int? = readInt(signal, "getRssnr")
+        val rssnrState = when {
+            rssnr == null -> "NULL"
+            rssnr == CellInfo.UNAVAILABLE -> "UNAVAILABLE"
+            rssnr == Int.MIN_VALUE -> "INT_MIN_VALUE"
             else -> "VALOR_VALIDO"
         }
-        Log.d(TAG, "LTE subscriptionId=$subscriptionId dbm=${signal.dbm} rsrp=${signal.rsrp} rsrq=${signal.rsrq} rssnr=$rssnr rssnrState=$rssnrState rssi=${signal.rssi} cqi=${signal.cqi} timingAdvance=${signal.timingAdvance} pci=${identity.pci} tac=${identity.tac} earfcn=${identity.earfcn} ci=${identity.ci}")
+        Log.d(TAG, "LTE subscriptionId=$subscriptionId dbm=${signal.dbm} rsrp=${signal.rsrp} rsrq=${signal.rsrq} rssnrRaw=$rssnr rssnrState=$rssnrState rssi=${signal.rssi} cqi=${signal.cqi} timingAdvance=${signal.timingAdvance} pci=${identity.pci} tac=${identity.tac} earfcn=${identity.earfcn} ci=${identity.ci}")
     }
 
     private fun logNr(subscriptionId: Int, cell: CellInfoNr) {
         val signal = cell.cellSignalStrength
         val identity = cell.cellIdentity
-        Log.d(TAG, "NR subscriptionId=$subscriptionId ssRsrp=${signal.ssRsrp} ssRsrq=${signal.ssRsrq} ssSinr=${signal.ssSinr} csiRsrp=${signal.csiRsrp} csiRsrq=${signal.csiRsrq} csiSinr=${signal.csiSinr} pci=${identity.pci} tac=${identity.tac} nrarfcn=${identity.nrarfcn} nci=${identity.nci}")
+        val values = listOf(
+            "getSsRsrp" to readInt(signal, "getSsRsrp"),
+            "getSsRsrq" to readInt(signal, "getSsRsrq"),
+            "getSsSinr" to readInt(signal, "getSsSinr"),
+            "getCsiRsrp" to readInt(signal, "getCsiRsrp"),
+            "getCsiRsrq" to readInt(signal, "getCsiRsrq"),
+            "getCsiSinr" to readInt(signal, "getCsiSinr"),
+            "getPci" to readInt(identity, "getPci"),
+            "getTac" to readInt(identity, "getTac"),
+            "getNrarfcn" to readInt(identity, "getNrarfcn"),
+            "getNci" to readInt(identity, "getNci")
+        )
+        Log.d(TAG, "NR subscriptionId=$subscriptionId values=${values.joinToString(", ") { (name, value) -> "$name=$value" }}")
+    }
+
+    private fun readInt(target: Any?, methodName: String): Int? {
+        if (target == null) return null
+        val method = target.javaClass.methods.firstOrNull { it.name == methodName }
+            ?: return null
+        return runCatching {
+            val value = method.invoke(target)
+            (value as? Number)?.toInt()
+        }.getOrNull()
     }
 }
