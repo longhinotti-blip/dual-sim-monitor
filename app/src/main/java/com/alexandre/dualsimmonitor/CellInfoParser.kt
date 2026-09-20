@@ -1,5 +1,6 @@
 package com.alexandre.dualsimmonitor
 
+import android.telephony.CellIdentityNr
 import android.telephony.CellInfo
 import android.telephony.CellInfoCdma
 import android.telephony.CellInfoGsm
@@ -7,51 +8,16 @@ import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellInfoWcdma
 import android.telephony.CellSignalStrengthNr
+import android.telephony.CellSignalStrengthWcdma
 
 /** Converts platform CellInfo objects into values safe for display. */
 object CellInfoParser {
     fun parse(cell: CellInfo): CellSnapshot = when (cell) {
         is CellInfoLte -> parseLte(cell)
         is CellInfoNr -> parseNr(cell)
-        is CellInfoWcdma -> {
-            val identity = cell.cellIdentity
-            val signal = cell.cellSignalStrength
-            CellSnapshot(
-                technology = "3G / WCDMA",
-                registered = cell.isRegistered,
-                cell = identity.cid.readableUnsigned(),
-                dbm = signal.dbm.readableSigned(),
-                asu = signal.asuLevel.readableUnsigned(),
-                rscp = signal.rscp.readableSigned(),
-                ecNo = signal.ecNo.readableSigned(),
-                lac = identity.lac.readableUnsigned(),
-                psc = identity.psc.readableUnsigned()
-            )
-        }
-        is CellInfoGsm -> {
-            val identity = cell.cellIdentity
-            val signal = cell.cellSignalStrength
-            CellSnapshot(
-                technology = "2G / GSM",
-                registered = cell.isRegistered,
-                cell = identity.cid.readableUnsigned(),
-                dbm = signal.dbm.readableSigned(),
-                asu = signal.asuLevel.readableUnsigned(),
-                lac = identity.lac.readableUnsigned(),
-                arfcn = identity.arfcn.readableUnsigned(),
-                bsic = identity.bsic.readableUnsigned()
-            )
-        }
-        is CellInfoCdma -> {
-            val signal = cell.cellSignalStrength
-            CellSnapshot(
-                technology = "CDMA",
-                registered = cell.isRegistered,
-                cell = cell.cellIdentity.basestationId.readableUnsigned(),
-                dbm = signal.dbm.readableSigned(),
-                asu = signal.asuLevel.readableUnsigned()
-            )
-        }
+        is CellInfoWcdma -> parseWcdma(cell)
+        is CellInfoGsm -> parseGsm(cell)
+        is CellInfoCdma -> parseCdma(cell)
         else -> CellSnapshot(
             technology = "Desconhecida",
             registered = cell.isRegistered,
@@ -80,23 +46,65 @@ object CellInfoParser {
     }
 
     private fun parseNr(cell: CellInfoNr): CellSnapshot {
-        val identity = cell.cellIdentity
+        val identity = cell.cellIdentity as? CellIdentityNr
         val signal = cell.cellSignalStrength as? CellSignalStrengthNr
         return CellSnapshot(
             technology = "5G / NR",
             registered = cell.isRegistered,
-            cell = identity.nci.readableUnsigned(),
-            dbm = signal?.dbm.readableSigned(),
-            asu = signal?.asuLevel.readableUnsigned(),
-            rsrp = signal?.ssRsrp.readableSigned(),
-            rsrq = signal?.ssRsrq.readableSigned(),
-            sinr = signal?.ssSinr.readableSigned(),
-            csiRsrp = signal?.csiRsrp.readableSigned(),
-            csiRsrq = signal?.csiRsrq.readableSigned(),
-            csiSinr = signal?.csiSinr.readableSigned(),
-            pci = identity.pci.readableUnsigned(),
-            tac = identity.tac.readableUnsigned(),
-            nrarfcn = identity.nrarfcn.readableUnsigned()
+            cell = identity?.nci?.readableUnsigned() ?: "Indisponível",
+            dbm = signal?.dbm.readableSigned() ?: "Indisponível",
+            asu = signal?.asuLevel.readableUnsigned() ?: "Indisponível",
+            rsrp = signal?.ssRsrp.readableSigned() ?: "Indisponível",
+            rsrq = signal?.ssRsrq.readableSigned() ?: "Indisponível",
+            sinr = signal?.ssSinr.readableSigned() ?: "Indisponível",
+            csiRsrp = signal?.csiRsrp.readableSigned() ?: "Indisponível",
+            csiRsrq = signal?.csiRsrq.readableSigned() ?: "Indisponível",
+            csiSinr = signal?.csiSinr.readableSigned() ?: "Indisponível",
+            pci = identity?.pci.readableUnsigned() ?: "Indisponível",
+            tac = identity?.tac.readableUnsigned() ?: "Indisponível",
+            nrarfcn = identity?.nrarfcn.readableUnsigned() ?: "Indisponível"
+        )
+    }
+
+    private fun parseWcdma(cell: CellInfoWcdma): CellSnapshot {
+        val identity = cell.cellIdentity
+        val signal = cell.cellSignalStrength as? CellSignalStrengthWcdma
+        return CellSnapshot(
+            technology = "3G / WCDMA",
+            registered = cell.isRegistered,
+            cell = identity.cid.readableUnsigned(),
+            dbm = signal?.dbm.readableSigned() ?: "Indisponível",
+            asu = signal?.asuLevel.readableUnsigned() ?: "Indisponível",
+            rscp = signal?.rscp.readableSigned() ?: "Indisponível",
+            ecNo = signal?.ecNo.readableSigned() ?: "Indisponível",
+            lac = identity.lac.readableUnsigned(),
+            psc = identity.psc.readableUnsigned()
+        )
+    }
+
+    private fun parseGsm(cell: CellInfoGsm): CellSnapshot {
+        val identity = cell.cellIdentity
+        val signal = cell.cellSignalStrength
+        return CellSnapshot(
+            technology = "2G / GSM",
+            registered = cell.isRegistered,
+            cell = identity.cid.readableUnsigned(),
+            dbm = signal.dbm.readableSigned(),
+            asu = signal.asuLevel.readableUnsigned(),
+            lac = identity.lac.readableUnsigned(),
+            arfcn = identity.arfcn.readableUnsigned(),
+            bsic = identity.bsic.readableUnsigned()
+        )
+    }
+
+    private fun parseCdma(cell: CellInfoCdma): CellSnapshot {
+        val signal = cell.cellSignalStrength
+        return CellSnapshot(
+            technology = "CDMA",
+            registered = cell.isRegistered,
+            cell = cell.cellIdentity.basestationId.readableUnsigned(),
+            dbm = signal.dbm.readableSigned(),
+            asu = signal.asuLevel.readableUnsigned()
         )
     }
 
