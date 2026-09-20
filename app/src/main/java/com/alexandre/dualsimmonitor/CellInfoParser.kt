@@ -37,11 +37,11 @@ object CellInfoParser {
             cell = identity.ci.readableUnsigned(),
             dbm = signal.dbm.readableSigned(),
             asu = signal.asuLevel.readableUnsigned(),
-            rsrp = signal.rsrp.readableSigned(),
-            rsrq = signal.rsrq.readableSigned(),
-            sinr = signal.rssnr.readableSigned(),
-            cqi = signal.cqi.readableUnsigned(),
-            timingAdvance = signal.timingAdvance.readableUnsigned(),
+            rsrp = readValue(signal, listOf("rsrp"), "Indisponível"),
+            rsrq = readValue(signal, listOf("rsrq"), "Indisponível"),
+            sinr = readValue(signal, listOf("rssnr", "sinr"), "Indisponível"),
+            cqi = readValue(signal, listOf("cqi"), "Indisponível"),
+            timingAdvance = readValue(signal, listOf("timingAdvance"), "Indisponível"),
             pci = identity.pci.readableUnsigned(),
             tac = identity.tac.readableUnsigned(),
             earfcn = identity.earfcn.readableUnsigned()
@@ -116,7 +116,10 @@ object CellInfoParser {
 
         val methods = target.javaClass.methods
         for (candidate in candidates) {
-            val getter = methods.firstOrNull { it.name == candidate || it.name == candidate.toGetterName() }
+            val getter = methods.firstOrNull { method ->
+                val name = method.name
+                name == candidate || name == candidate.toGetterName()
+            }
             if (getter != null) {
                 return try {
                     val value = getter.invoke(target)
