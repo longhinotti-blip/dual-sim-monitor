@@ -5,66 +5,72 @@ import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.util.Log
 
-/** Temporary runtime diagnostics only. This does not modify parsed or persisted values. */
+data class CellDiagnostic(
+    val subscriptionId: Int,
+    val slot: Int,
+    val cellClass: String,
+    val registered: Boolean,
+    val cellCount: Int,
+    val timestampMillis: Long,
+    val ageMillis: Long,
+    val dbmRaw: String = "—",
+    val rsrpRaw: String = "—",
+    val rsrqRaw: String = "—",
+    val rssnrRaw: String = "—",
+    val rssnrFormatted: String = "—",
+    val pci: String = "—",
+    val tac: String = "—",
+    val earfcn: String = "—",
+    val ciOrNci: String = "—"
+)
+
+/** Temporary runtime diagnostics only. It does not modify parsed or persisted values. */
 object CellInfoDebug {
     private const val TAG = "DualSimMonitor/CellInfo"
 
-    fun request(subscriptionId: Int, slot: Int) {
-        Log.d(TAG, "CELL_INFO_REQUEST subscriptionId=$subscriptionId slot=$slot")
-    }
+    fun request(subscriptionId: Int, slot: Int) = Log.d(TAG, "CELL_INFO_REQUEST subscriptionId=$subscriptionId slot=$slot")
 
-    fun callback(subscriptionId: Int, slot: Int, source: String, cells: List<CellInfo>) {
+    fun callback(subscriptionId: Int, slot: Int, source: String, cells: List<CellInfo>): List<CellDiagnostic> {
         Log.d(TAG, "CELL_INFO_CALLBACK subscriptionId=$subscriptionId slot=$slot SOURCE=$source count=${cells.size}")
-        cells.forEachIndexed { index, cell -> logCell(subscriptionId, slot, source, index, cell) }
-    }
-
-    private fun logCell(subscriptionId: Int, slot: Int, source: String, index: Int, cell: CellInfo) {
-        val ageMs = (System.currentTimeMillis() - cell.timestampMillis).coerceAtLeast(0L)
-        Log.d(TAG, "CELL subscriptionId=$subscriptionId slot=$slot index=$index SOURCE=$source class=${cell.javaClass.name} registered=${cell.isRegistered} timestamp=${cell.timestampMillis} ageMs=$ageMs")
-        when (cell) {
-            is CellInfoLte -> logLte(subscriptionId, cell)
-            is CellInfoNr -> logNr(subscriptionId, cell)
+        return cells.mapIndexed { index, cell ->
+            val diagnostic = describe(subscriptionId, slot, cells.size, cell)
+            Log.d(TAG, "CELL index=$index source=$source $diagnostic")
+            diagnostic
         }
     }
 
-    private fun logLte(subscriptionId: Int, cell: CellInfoLte) {
-        val signal = cell.cellSignalStrength
-        val identity = cell.cellIdentity
-        val rssnr: Int? = readInt(signal, "getRssnr")
-        val rssnrState = when {
-            rssnr == null -> "NULL"
-            rssnr == CellInfo.UNAVAILABLE -> "UNAVAILABLE"
-            rssnr == Int.MIN_VALUE -> "INT_MIN_VALUE"
-            else -> "VALOR_VALIDO"
+    private fun describe(subscriptionId: Int, slot: Int, count: Int, cell: CellInfo): CellDiagnostic {
+        val timestamp = cell.timestampMillis
+        val age = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
+        return when (cell) {
+            is CellInfoLte -> {
+                val s = cell.cellSignalStrength
+                val i = cell.cellIdentity
+                val raw = s.rssnr
+                val formatted = when {
+                    raw == CellInfo.UNAVAILABLE -> "Indisponível"
+                    raw == Int.MIN_VALUE -> "Indisponível"
+                    else -> raw.toString()
+                }
+                CellDiagnostic(subscriptionId, slot, cell.javaClass.name, cell.isRegistered, count, timestamp, age,
+                    s.dbm.toString(), s.rsrp.toString(), s.rsrq.toString(), rawState(raw), formatted,
+                    i.pci.toString(), i.tac.toString(), i.earfcn.toString(), i.ci.toString())
+            }
+            is CellInfoNr -> CellDiagnostic(subscriptionId, slot, cell.javaClass.name, cell.isRegistered, count, timestamp, age,
+                cell.cellSignalStrength.dbm.toString(), "NR", "NR", "NR", "NR",
+                read(cell.cellIdentity, "getPci"), read(cell.cellIdentity, "getTac"), read(cell.cellIdentity, "getNrarfcn"), read(cell.cellIdentity, "getNci"))
+            else -> CellDiagnostic(subscriptionId, slot, cell.javaClass.name, cell.isRegistered, count, timestamp, age)
         }
-        Log.d(TAG, "LTE subscriptionId=$subscriptionId dbm=${signal.dbm} rsrp=${signal.rsrp} rsrq=${signal.rsrq} rssnrRaw=$rssnr rssnrState=$rssnrState rssi=${signal.rssi} cqi=${signal.cqi} timingAdvance=${signal.timingAdvance} pci=${identity.pci} tac=${identity.tac} earfcn=${identity.earfcn} ci=${identity.ci}")
     }
 
-    private fun logNr(subscriptionId: Int, cell: CellInfoNr) {
-        val signal = cell.cellSignalStrength
-        val identity = cell.cellIdentity
-        val values = listOf(
-            "getSsRsrp" to readInt(signal, "getSsRsrp"),
-            "getSsRsrq" to readInt(signal, "getSsRsrq"),
-            "getSsSinr" to readInt(signal, "getSsSinr"),
-            "getCsiRsrp" to readInt(signal, "getCsiRsrp"),
-            "getCsiRsrq" to readInt(signal, "getCsiRsrq"),
-            "getCsiSinr" to readInt(signal, "getCsiSinr"),
-            "getPci" to readInt(identity, "getPci"),
-            "getTac" to readInt(identity, "getTac"),
-            "getNrarfcn" to readInt(identity, "getNrarfcn"),
-            "getNci" to readInt(identity, "getNci")
-        )
-        Log.d(TAG, "NR subscriptionId=$subscriptionId values=${values.joinToString(", ") { (name, value) -> "$name=$value" }}")
+    private fun rawState(value: Int): String = when (value) {
+        CellInfo.UNAVAILABLE -> "UNAVAILABLE"
+        Int.MIN_VALUE -> "INT_MIN_VALUE"
+        else -> value.toString()
     }
 
-    private fun readInt(target: Any?, methodName: String): Int? {
-        if (target == null) return null
-        val method = target.javaClass.methods.firstOrNull { it.name == methodName }
-            ?: return null
-        return runCatching {
-            val value = method.invoke(target)
-            (value as? Number)?.toInt()
-        }.getOrNull()
+    private fun read(target: Any?, methodName: String): String {
+        val method = target?.javaClass?.methods?.firstOrNull { it.name == methodName } ?: return "null"
+        return runCatching { method.invoke(target)?.toString() ?: "null" }.getOrDefault("null")
     }
 }
